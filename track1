@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Эхо-Трекер</title>
+    <style>
+        body { font-family: sans-serif; background: #121212; color: #fff; margin: 0; padding: 15px; overscroll-behavior-y: contain; }
+        .hidden { display: none !important; }
+        h1, h2 { text-align: center; margin-top: 0; font-size: 1.5rem; }
+        .nav { display: flex; gap: 10px; margin-bottom: 20px; }
+        .nav button { flex: 1; padding: 15px; background: #333; color: white; border: none; border-radius: 8px; font-size: 1.1rem; }
+        .nav button.active { background: #007bff; font-weight: bold; }
+        .depth-display { font-size: 4rem; text-align: center; margin: 20px 0; font-weight: bold; color: #4ade80; }
+        .btn-group { display: flex; gap: 10px; margin-bottom: 15px; }
+        button { background: #444; color: white; border: none; border-radius: 12px; padding: 20px; font-size: 1.5rem; flex: 1; touch-action: manipulation; }
+        button:active { background: #555; transform: scale(0.98); }
+        .btn-large { background: #2563eb; }
+        .btn-danger { background: #dc2626; }
+        .btn-success { background: #16a34a; }
+        .card { background: #1e1e1e; padding: 15px; border-radius: 12px; margin-bottom: 15px; }
+        input { width: 100%; padding: 15px; background: #333; border: 1px solid #555; color: white; border-radius: 8px; font-size: 1.2rem; box-sizing: border-box; margin-bottom: 10px; }
+        label { display: block; margin-bottom: 5px; color: #aaa; }
+        .calc-result { font-size: 1.2rem; text-align: center; margin-top: 10px; color: #fbbf24; min-height: 1.5em; }
+    </style>
+</head>
+<body>
+
+    <div class="nav">
+        <button id="tabMainBtn" class="active" onclick="switchTab('main')">Ловля</button>
+        <button id="tabSettingsBtn" onclick="switchTab('settings')">Настройки</button>
+    </div>
+
+    <!-- Вкладка Ловли -->
+    <div id="tabMain">
+        <div class="card">
+            <div style="text-align: center; color: #aaa;">Текущая глубина</div>
+            <div class="depth-display" id="currentDepthDisplay">0.0 м</div>
+            <div class="btn-group">
+                <button class="btn-large" onclick="changeTurns(-1)">-1 оборот<br><span style="font-size: 1rem">(сброс)</span></button>
+                <button class="btn-large" onclick="changeTurns(1)">+1 оборот<br><span style="font-size: 1rem">(подъем)</span></button>
+            </div>
+            <div class="btn-group">
+                <button class="btn-success" onclick="setDepth('surface')">Поверхность<br><span style="font-size: 1rem">(0 м)</span></button>
+                <button class="btn-danger" onclick="setDepth('bottom')">Дно<br><span style="font-size: 1rem">(<span id="btnBottomText">34.0</span> м)</span></button>
+            </div>
+        </div>
+
+        <div class="card">
+            <h2>Переход на горизонт</h2>
+            <label>Целевая глубина по эхолоту (м):</label>
+            <input type="number" id="targetDepthInput" step="0.1" placeholder="Например: 22.5">
+            <button class="btn-large" style="width: 100%; margin-top: 10px;" onclick="calculateTarget()">Рассчитать</button>
+            <div class="calc-result" id="calcResult"></div>
+        </div>
+    </div>
+
+    <!-- Вкладка Настроек и Калибровки -->
+    <div id="tabSettings" class="hidden">
+        <div class="card">
+            <h2>Базовые параметры</h2>
+            <label>Глубина дна (м):</label>
+            <input type="number" id="bottomDepthInput" step="0.1" value="34.0" onchange="saveSettings(true)">
+            
+            <label>Вымотка за 1 оборот (м):</label>
+            <input type="number" id="linePerTurnInput" step="0.01" value="0.75" onchange="saveSettings(true)">
+        </div>
+
+        <div class="card">
+            <h2>Калибровка</h2>
+            <p style="color: #aaa; font-size: 0.9rem;">Опустите приманку на дно и посчитайте количество оборотов до поверхности.</p>
+            <label>Точная глубина с эхолота (м):</label>
+            <input type="number" id="calibDepthInput" step="0.1" placeholder="Например: 30.0">
+            <label>Сколько получилось оборотов:</label>
+            <input type="number" id="calibTurnsInput" placeholder="Например: 42">
+            <button class="btn-large" style="width: 100%; margin-top: 10px;" onclick="calibrate()">Откалибровать</button>
+            <div class="calc-result" id="calibResult"></div>
+        </div>
+    </div>
+
+    <script>
+        let currentDepth = 0.0;
+        let bottomDepth = 34.0;
+        let linePerTurn = 0.75;
+
+        // Безопасная загрузка настроек (с защитой от ошибок Android)
+        try {
+            if (localStorage.getItem('fish_bottom')) {
+                bottomDepth = parseFloat(localStorage.getItem('fish_bottom'));
+            }
+            if (localStorage.getItem('fish_line')) {
+                linePerTurn = parseFloat(localStorage.getItem('fish_line'));
+            }
+            if (localStorage.getItem('fish_current')) {
+                currentDepth = parseFloat(localStorage.getItem('fish_current'));
+            }
+        } catch (e) {
+            console.warn("Локальное сохранение заблокировано браузером");
+        }
+
+        // Инициализация полей после безопасной загрузки
+        document.getElementById('bottomDepthInput').value = bottomDepth;
+        document.getElementById('linePerTurnInput').value = linePerTurn;
+        document.getElementById('btnBottomText').innerText = bottomDepth.toFixed(1);
+
+        function updateDisplay() {
+            document.getElementById('currentDepthDisplay').innerText = currentDepth.toFixed(1) + ' м';
+            try {
+                localStorage.setItem('fish_current', currentDepth);
+            } catch (e) {}
+        }
+
+        function saveSettings(showNotification = false) {
+            bottomDepth = parseFloat(document.getElementById('bottomDepthInput').value) || 0;
+            linePerTurn = parseFloat(document.getElementById('linePerTurnInput').value) || 0;
+            
+            try {
+                localStorage.setItem('fish_bottom', bottomDepth);
+                localStorage.setItem('fish_line', linePerTurn);
+            } catch (e) {}
+            
+            document.getElementById('btnBottomText').innerText = bottomDepth.toFixed(1);
+            
+            if (showNotification) {
+                alert("Настройки сохранены");
+            }
+        }
+
+        function changeTurns(direction) {
+            currentDepth -= (direction * linePerTurn);
+            if (currentDepth < 0) currentDepth = 0;
+            if (currentDepth > bottomDepth) currentDepth = bottomDepth;
+            updateDisplay();
+        }
+
+        function setDepth(position) {
+            if (position === 'surface') {
+                currentDepth = 0;
+            } else if (position === 'bottom') {
+                currentDepth = bottomDepth;
+            }
+            updateDisplay();
+            document.getElementById('calcResult').innerText = "";
+        }
+
+        function calculateTarget() {
+            let target = parseFloat(document.getElementById('targetDepthInput').value);
+            if (isNaN(target)) return;
+            
+            let difference = currentDepth - target; 
+            let turns = difference / linePerTurn;
+            
+            let actionText = turns > 0 ? "вверх" : "вниз";
+            let resText = `Крутить: ${Math.abs(turns).toFixed(1)} об. ${actionText}`;
+            
+            document.getElementById('calcResult').innerHTML = `<strong>${resText}</strong> <br><button onclick="applyTarget(${target})" style="margin-top:10px; padding:10px; font-size:1.1rem" class="btn-success">Готово (приманка на ${target}м)</button>`;
+        }
+
+        function applyTarget(target) {
+            currentDepth = target;
+            updateDisplay();
+            document.getElementById('calcResult').innerText = "Горизонт обновлен!";
+        }
+
+        function calibrate() {
+            let depth = parseFloat(document.getElementById('calibDepthInput').value);
+            let turns = parseFloat(document.getElementById('calibTurnsInput').value);
+            if (isNaN(depth) || isNaN(turns) || turns <= 0) return;
+            
+            let newLine = depth / turns;
+            linePerTurn = newLine;
+            
+            document.getElementById('linePerTurnInput').value = newLine.toFixed(3);
+            document.getElementById('bottomDepthInput').value = depth.toFixed(1);
+            
+            saveSettings(false);
+            
+            document.getElementById('calibResult').innerHTML = `Установлено: <strong>${newLine.toFixed(3)} м/об.</strong><br>Базовая глубина дна обновлена.`;
+        }
+
+        function switchTab(tab) {
+            document.getElementById('tabMain').classList.add('hidden');
+            document.getElementById('tabSettings').classList.add('hidden');
+            document.getElementById('tabMainBtn').classList.remove('active');
+            document.getElementById('tabSettingsBtn').classList.remove('active');
+            
+            if (tab === 'main') {
+                document.getElementById('tabMain').classList.remove('hidden');
+                document.getElementById('tabMainBtn').classList.add('active');
+            } else {
+                document.getElementById('tabSettings').classList.remove('hidden');
+                document.getElementById('tabSettingsBtn').classList.add('active');
+            }
+        }
+
+        updateDisplay();
+    </script>
+</body>
+</html>
